@@ -1,6 +1,6 @@
-// Calls the Dialogue Dhamaka agent team on Cloud Run (ADK /run_sse) and speaks dialogues.
+// Calls the Dialogue Dhamaka agent teams on Cloud Run (ADK /run_sse) and speaks dialogues.
 const BASE = (import.meta.env.VITE_DLG_API || "https://dialogue-puxir3jrda-uc.a.run.app").replace(/\/+$/, "");
-const APP = "dialogue";
+const DET_BASE = (import.meta.env.VITE_DET_API || "https://detective-puxir3jrda-uc.a.run.app").replace(/\/+$/, "");
 
 function parse(raw) {
   const author = raw.author || "agent";
@@ -8,16 +8,16 @@ function parse(raw) {
   return { author, text };
 }
 
-export async function runDialogue(message, { onEvent } = {}) {
+async function run(base, app, message, { onEvent } = {}) {
   const uid = "web", sid = "s-" + Date.now().toString(36);
-  await fetch(`${BASE}/apps/${APP}/users/${uid}/sessions/${sid}`, {
+  await fetch(`${base}/apps/${app}/users/${uid}/sessions/${sid}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
   });
-  const res = await fetch(`${BASE}/run_sse`, {
+  const res = await fetch(`${base}/run_sse`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_name: APP, user_id: uid, session_id: sid, new_message: { role: "user", parts: [{ text: message }] }, streaming: false }),
+    body: JSON.stringify({ app_name: app, user_id: uid, session_id: sid, new_message: { role: "user", parts: [{ text: message }] }, streaming: false }),
   });
-  if (!res.ok || !res.body) throw new Error(`Dialogue API error ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`Agent API error ${res.status}`);
   const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
   while (true) {
     const { value, done } = await reader.read();
@@ -31,6 +31,19 @@ export async function runDialogue(message, { onEvent } = {}) {
       try { onEvent?.(parse(JSON.parse(j))); } catch { /* partial */ }
     }
   }
+}
+
+export const runDialogue = (message, opts) => run(BASE, "dialogue", message, opts);
+export const runDetective = (message, opts) => run(DET_BASE, "detective", message, opts);
+
+// Pull the single JSON detection object from the Detective's reply.
+export function extractDetection(text) {
+  if (!text) return null;
+  let s = text;
+  const m = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/);
+  if (m) s = m[1];
+  else { const a = text.indexOf("{"), b = text.lastIndexOf("}"); if (a >= 0 && b > a) s = text.slice(a, b + 1); }
+  try { const d = JSON.parse(s); return (d && typeof d === "object" && "recognized" in d) ? d : null; } catch { return null; }
 }
 
 export function extractRounds(text) {

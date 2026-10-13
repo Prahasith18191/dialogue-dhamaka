@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { runDialogue, extractRounds, speak, stopSpeak } from "./dialogueClient";
+import { runDialogue, runDetective, extractRounds, extractDetection, speak, stopSpeak } from "./dialogueClient";
 
-const Icon = ({ name, ...p }) => <span className="material-symbols-rounded" {...p}>{name}</span>;
+const Icon = ({ name, className = "", ...p }) => <span className={"material-symbols-rounded " + className} {...p}>{name}</span>;
 const ROUND_TIME = 18;
 
 export default function App() {
@@ -19,6 +19,26 @@ export default function App() {
   const [agents, setAgents] = useState({});
   const [err, setErr] = useState(null);
   const timer = useRef(null);
+
+  // Detective mode
+  const [detInput, setDetInput] = useState("");
+  const [detBusy, setDetBusy] = useState(false);
+  const [detResult, setDetResult] = useState(null);
+  const [detErr, setDetErr] = useState(null);
+
+  async function detect() {
+    const q = detInput.trim();
+    if (!q || detBusy) return;
+    setDetBusy(true); setDetErr(null); setDetResult(null); stopSpeak();
+    try {
+      let found = null;
+      await runDetective(q, { onEvent: (ev) => { const d = extractDetection(ev.text); if (d) found = d; } });
+      if (!found) throw new Error("The detective couldn't read that — try another line.");
+      setDetResult(found);
+      if (found.recognized && found.dialogue_tr) { setSpeaking(true); speak(found.dialogue_tr, { onEnd: () => setSpeaking(false) }); }
+    } catch (e) { setDetErr(e.message || "Something broke."); }
+    finally { setDetBusy(false); }
+  }
 
   const r = rounds[idx];
 
@@ -86,16 +106,25 @@ export default function App() {
           {/* MENU */}
           {screen === "menu" && (
             <motion.section key="menu" className="hero" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <div className="eyebrow">🔊 Telugu Cinema · Guess the Movie</div>
+              <div className="eyebrow">🔊 Telugu Cinema · Powered by AI agents</div>
               <h1>Dialogue Dhamaka</h1>
-              <p className="sub">Hear an iconic Telugu movie dialogue — then guess the film. Our agents curate fresh rounds every game; the faster you answer, the bigger your dhamaka.</p>
+              <p className="sub">Two ways to play. Let the agents quiz you on iconic Telugu dialogues — or hand the AI a dialogue and watch it name the movie.</p>
               {err && <p className="err" style={{ maxWidth: 440, margin: "18px auto 0" }}>⚠ {err}</p>}
-              <div className="row" style={{ marginTop: 26 }}>
-                <motion.button className="btn" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={start}>
-                  <Icon name="play_arrow" /> Start the show
+              <div className="modes">
+                <motion.button className="mode" whileHover={{ y: -4 }} whileTap={{ scale: 0.98 }} onClick={start}>
+                  <span className="mi"><Icon name="stadia_controller" /></span>
+                  <div className="mt">Guess the Movie</div>
+                  <div className="md">Hear a dialogue, pick the film. Beat the clock, build a streak.</div>
+                  <div className="mgo">Play <Icon name="arrow_forward" /></div>
+                </motion.button>
+                <motion.button className="mode alt" whileHover={{ y: -4 }} whileTap={{ scale: 0.98 }} onClick={() => { setScreen("detect"); setDetResult(null); setDetErr(null); }}>
+                  <span className="mi"><Icon name="search_insights" /></span>
+                  <div className="mt">Dialogue Detective</div>
+                  <div className="md">Type any Telugu dialogue — the AI recognizes the movie, character & year.</div>
+                  <div className="mgo">Identify <Icon name="arrow_forward" /></div>
                 </motion.button>
               </div>
-              <p style={{ color: "var(--faint)", fontSize: ".82rem", marginTop: 14 }}>🏆 Best: <b style={{ color: "var(--gold)" }}>{best}</b> · turn your sound on 🔈</p>
+              <p style={{ color: "var(--faint)", fontSize: ".82rem", marginTop: 18 }}>🏆 Best: <b style={{ color: "var(--gold)" }}>{best}</b> · turn your sound on 🔈</p>
             </motion.section>
           )}
 
@@ -172,6 +201,73 @@ export default function App() {
               <p style={{ color: "var(--faint)", margin: "6px 0 0" }}>🏆 Best: <b style={{ color: "var(--gold)" }}>{best}</b>{score >= best && score > 0 ? " · new high!" : ""}</p>
               <div className="row" style={{ marginTop: 24 }}>
                 <motion.button className="btn" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={start}><Icon name="replay" /> Play again</motion.button>
+                <button className="btn ghost" onClick={() => setScreen("menu")}><Icon name="home" /> Home</button>
+              </div>
+            </motion.section>
+          )}
+
+          {/* DETECTIVE */}
+          {screen === "detect" && (
+            <motion.section key="detect" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} style={{ paddingTop: 26 }}>
+              <div className="center" style={{ marginBottom: 18 }}>
+                <div className="eyebrow">🕵️ Dialogue Detective</div>
+                <h2 style={{ fontSize: "clamp(1.8rem,1.3rem+2.6vw,2.8rem)", marginTop: 8 }}>Name that movie</h2>
+                <p className="sub" style={{ marginTop: 10 }}>Paste or type any Telugu movie dialogue — Telugu, transliteration, even a rough English version. The AI detective figures out the film.</p>
+              </div>
+
+              <div className="card pad">
+                <textarea className="det-in" rows={3} value={detInput} disabled={detBusy}
+                  onChange={(e) => setDetInput(e.target.value)}
+                  placeholder="e.g. Naakkonchem tikkundi, kaani daaniko lekkundi…"
+                  onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") detect(); }} />
+                <div className="row" style={{ justifyContent: "space-between", marginTop: 12 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    {["Mahesh Babu Pokiri dialogue", "Pushpa — jhukega nahi", "Baahubali — att-a vinaraa"].map((ex) => (
+                      <button key={ex} className="chip" disabled={detBusy} onClick={() => setDetInput(ex)}><Icon name="bolt" /> {ex.split(" ")[0]}</button>
+                    ))}
+                  </div>
+                  <button className="btn" disabled={detBusy || !detInput.trim()} onClick={detect}>
+                    {detBusy ? <><Icon name="progress_activity" className="spin" /> Investigating…</> : <><Icon name="search" /> Identify</>}
+                  </button>
+                </div>
+
+                {detBusy && (
+                  <div className="agentrow" style={{ marginTop: 18 }}>
+                    <div className="agent on"><span className="ic"><Icon name="search_insights" /></span>
+                      <div><div style={{ fontWeight: 600, fontSize: ".9rem" }}>Detective</div><div style={{ fontSize: ".72rem", color: "var(--faint)" }}>watching the reel…</div></div>
+                    </div>
+                  </div>
+                )}
+                {detErr && <p className="err" style={{ marginTop: 16 }}>⚠ {detErr}</p>}
+
+                <AnimatePresence>
+                  {detResult && (
+                    <motion.div className="reveal" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ marginTop: 20 }}>
+                      {detResult.recognized ? (
+                        <>
+                          <div className={"orb" + (speaking ? " on" : "")} style={{ width: 70, height: 70, margin: "0 auto 10px" }}><Icon name={speaking ? "graphic_eq" : "movie"} /></div>
+                          <div className={"conf " + (detResult.confidence || "low")}>{(detResult.confidence || "low")} confidence</div>
+                          <div className="movie" style={{ color: "var(--gold)", fontSize: "1.8rem", marginTop: 8 }}>{detResult.movie} <span style={{ color: "var(--faint)", fontWeight: 400, fontSize: "1.1rem" }}>({detResult.year})</span></div>
+                          <div className="meta">🎭 {detResult.character}{detResult.actor ? ` · ${detResult.actor}` : ""}</div>
+                          {detResult.dialogue_te && <div className="dte te" style={{ fontSize: "1.3rem", margin: "14px 0 2px" }}>{detResult.dialogue_te}</div>}
+                          {detResult.dialogue_tr && <div className="dtr">"{detResult.dialogue_tr}"</div>}
+                          {detResult.meaning && <div className="mean">{detResult.meaning}</div>}
+                          {detResult.note && <div style={{ color: "var(--dim)", fontSize: ".9rem", marginTop: 10 }}>💡 {detResult.note}</div>}
+                          {detResult.dialogue_tr && <div className="row" style={{ marginTop: 14 }}><button className="chip" onClick={() => { setSpeaking(true); speak(detResult.dialogue_tr, { onEnd: () => setSpeaking(false) }); }}><Icon name="volume_up" /> Hear it</button></div>}
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: "1.3rem" }}>🤔 Couldn't place that one</div>
+                          {detResult.note && <div style={{ color: "var(--dim)", fontSize: ".95rem", marginTop: 8 }}>{detResult.note}</div>}
+                        </>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="row" style={{ marginTop: 18 }}>
+                <button className="btn ghost" onClick={() => { setScreen("menu"); stopSpeak(); }}><Icon name="arrow_back" /> Back</button>
               </div>
             </motion.section>
           )}
